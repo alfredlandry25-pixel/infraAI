@@ -28,3 +28,4 @@ python-socketio==5.16.3
 SQLAlchemy==2.0.51
 typing_extensions==4.16.0
 Werkzeug==3.1.8
+redis==5.2.1
