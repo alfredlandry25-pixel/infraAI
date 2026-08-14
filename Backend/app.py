@@ -1,11 +1,11 @@
 import eventlet
 eventlet.monkey_patch()
 
-# Then import everything else
+# only now import everything else
 from flask import Flask
-# ... rest of imports
-
+from flask_socketio import SocketIO
 import os
+# ... rest of your imports
 from flask_jwt_extended import JWTManager
 from flask_migrate import Migrate
 from models_auth import db, User, Role
