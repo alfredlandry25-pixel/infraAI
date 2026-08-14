@@ -4,6 +4,10 @@ import { applyNodeChanges, applyEdgeChanges, addEdge } from "reactflow";
 const H_SPACING = 260;
 const V_SPACING = 140;
 
+// Arranges backend nodes/edges into a simple layered layout: nodes with
+// no incoming connections sit at the top, everything they connect to
+// flows downward. Used as a fallback default only for nodes that have
+// never had a real position yet (brand new nodes).
 function autoLayout(nodes, edges) {
   const incoming = new Map();
   const adjacency = new Map();
@@ -74,17 +78,33 @@ let nodeIdCounter = 1000;
 export const useDesignStore = create((set, get) => ({
   nodes: [],
   edges: [],
+  revision: 0,
 
   setDesignFromBackend: (design) => {
     const backendNodes = design?.nodes || [];
     const backendEdges = design?.edges || [];
     const existing = get().nodes;
     const existingPositions = new Map(existing.map((n) => [n.id, n.position]));
+    const existingSelected = new Map(existing.map((n) => [n.id, n.selected]));
+
+    // A node in the incoming design might carry a real position — that
+    // means someone (possibly a collaborator) just moved it and it's
+    // part of this update. That takes priority over what we already
+    // had locally, which is what actually makes a drag show up on
+    // everyone else's screen.
+    const backendPositions = new Map(
+      backendNodes.filter((n) => n.position).map((n) => [n.id, n.position])
+    );
 
     const laidOut = autoLayout(backendNodes, backendEdges);
-    const nodes = laidOut.map((n) =>
-      existingPositions.has(n.id) ? { ...n, position: existingPositions.get(n.id) } : n
-    );
+    const nodes = laidOut.map((n) => ({
+      ...n,
+      position:
+        backendPositions.get(n.id) ||   // 1. a real move just arrived — use it
+        existingPositions.get(n.id) ||  // 2. we already know where this is — keep it stable
+        n.position,                     // 3. brand new node — auto-arranged default
+      selected: existingSelected.get(n.id) || false,
+    }));
     const edges = toReactFlowEdges(backendEdges);
 
     set({ nodes, edges });
@@ -97,6 +117,7 @@ export const useDesignStore = create((set, get) => ({
         id: n.id,
         type: n.data?.serviceType || "default",
         label: n.data?.label || n.id,
+        position: n.position,
       })),
       edges: edges.map((e) => ({
         from: e.source,
@@ -107,17 +128,30 @@ export const useDesignStore = create((set, get) => ({
   },
 
   onNodesChange: (changes) => {
-    set({ nodes: applyNodeChanges(changes, get().nodes) });
+    const meaningful = changes.some((c) => {
+      if (c.type === "select" || c.type === "dimensions") return false;
+      if (c.type === "position") return c.dragging === false; // only count a finished drag, not every frame
+      return true; // "remove", "reset", etc.
+    });
+    set((state) => ({
+      nodes: applyNodeChanges(changes, state.nodes),
+      revision: meaningful ? state.revision + 1 : state.revision,
+    }));
   },
 
   onEdgesChange: (changes) => {
-    set({ edges: applyEdgeChanges(changes, get().edges) });
+    const meaningful = changes.some((c) => c.type !== "select");
+    set((state) => ({
+      edges: applyEdgeChanges(changes, state.edges),
+      revision: meaningful ? state.revision + 1 : state.revision,
+    }));
   },
 
   onConnect: (connection) => {
-    set({
-      edges: addEdge({ ...connection, type: "labeled", data: { label: "connects to" } }, get().edges),
-    });
+    set((state) => ({
+      edges: addEdge({ ...connection, type: "labeled", data: { label: "connects to" } }, state.edges),
+      revision: state.revision + 1,
+    }));
   },
 
   addNode: (serviceType, label) => {
@@ -131,28 +165,31 @@ export const useDesignStore = create((set, get) => ({
       position: { x: 100 + (offset % 400), y: 100 + Math.floor(offset / 400) * 120 },
       data: { label: label || serviceType, serviceType },
     };
-    set({ nodes: [...nodes, newNode] });
+    set((state) => ({ nodes: [...state.nodes, newNode], revision: state.revision + 1 }));
     return id;
   },
 
   updateNodeLabel: (id, label) => {
-    set({
-      nodes: get().nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, label } } : n)),
-    });
+    set((state) => ({
+      nodes: state.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, label } } : n)),
+      revision: state.revision + 1,
+    }));
   },
 
   updateEdgeLabel: (id, label) => {
-    set({
-      edges: get().edges.map((e) => (e.id === id ? { ...e, data: { ...e.data, label } } : e)),
-    });
+    set((state) => ({
+      edges: state.edges.map((e) => (e.id === id ? { ...e, data: { ...e.data, label } } : e)),
+      revision: state.revision + 1,
+    }));
   },
 
   deleteNode: (id) => {
-    set({
-      nodes: get().nodes.filter((n) => n.id !== id),
-      edges: get().edges.filter((e) => e.source !== id && e.target !== id),
-    });
+    set((state) => ({
+      nodes: state.nodes.filter((n) => n.id !== id),
+      edges: state.edges.filter((e) => e.source !== id && e.target !== id),
+      revision: state.revision + 1,
+    }));
   },
 
-  clear: () => set({ nodes: [], edges: [] }),
+  clear: () => set({ nodes: [], edges: [], revision: 0 }),
 }));

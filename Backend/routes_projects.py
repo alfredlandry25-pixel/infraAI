@@ -1,8 +1,8 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from models_auth import db, Role, User
-from models import Project, ProjectMember, Role, Design
-from decorators import require_role
+from models import Project, ProjectMember, Role, Design, Notification, TeamMember
+from decorators import require_role, get_effective_project_role, get_effective_members, get_effective_member_count
 
 projects_bp = Blueprint("projects", __name__)
 
@@ -10,17 +10,30 @@ projects_bp = Blueprint("projects", __name__)
 @projects_bp.route("/projects", methods=["GET"])
 @jwt_required()
 def list_projects():
-    """Lists all projects the current user is a member of, along with their role."""
+    """
+    Lists every project the current user can access — either through a
+    direct invite (ProjectMember) or through membership in the squad
+    that owns the project (Project.team_id + TeamMember) — along with
+    their effective role in each.
+    """
     user_id = get_jwt_identity()
 
-    memberships = ProjectMember.query.filter_by(user_id=user_id).all()
+    direct_project_ids = {m.project_id for m in ProjectMember.query.filter_by(user_id=user_id).all()}
+
+    team_ids = {m.team_id for m in TeamMember.query.filter_by(user_id=user_id).all()}
+    squad_project_ids = set()
+    if team_ids:
+        squad_project_ids = {p.id for p in Project.query.filter(Project.team_id.in_(team_ids)).all()}
 
     projects = []
-    for m in memberships:
-        project_data = m.project.to_dict()
-        project_data["my_role"] = m.role_name
-        project_data["member_count"] = ProjectMember.query.filter_by(project_id=m.project_id).count()
-        projects.append(project_data)
+    for pid in direct_project_ids | squad_project_ids:
+        project = Project.query.get(pid)
+        if not project:
+            continue
+        data = project.to_dict()
+        data["my_role"] = get_effective_project_role(user_id, pid)
+        data["member_count"] = get_effective_member_count(pid)
+        projects.append(data)
 
     return jsonify(projects), 200
 
@@ -28,7 +41,12 @@ def list_projects():
 @projects_bp.route("/projects", methods=["POST"])
 @jwt_required()
 def create_project():
-    """Creates a new project. The creator automatically becomes owner."""
+    """
+    Creates a new project. The creator automatically becomes owner —
+    unless it's created directly under a squad (team_id given), in
+    which case access comes entirely from squad membership instead, so
+    every current and future squad member has it automatically.
+    """
     user_id = get_jwt_identity()
     data = request.get_json()
 
@@ -36,24 +54,33 @@ def create_project():
     if not name:
         return jsonify({"error": "name is required"}), 400
 
+    team_id = data.get("team_id")
+    if team_id is not None:
+        squad_membership = TeamMember.query.filter_by(team_id=team_id, user_id=user_id).first()
+        if not squad_membership:
+            return jsonify({"error": "You are not a member of that squad"}), 403
+
     project = Project(
         name=name,
         description=data.get("description"),
-        owner_id=user_id
+        owner_id=user_id,
+        team_id=team_id
     )
     db.session.add(project)
-    db.session.flush()  # so project.id is available before commit
+    db.session.flush()
 
-    owner_role = Role.query.filter_by(name="owner").first()
-    if not owner_role:
-        return jsonify({"error": "owner role not seeded yet — run seed_roles.py"}), 500
+    if team_id is None:
+        owner_role = Role.query.filter_by(name="owner").first()
+        if not owner_role:
+            return jsonify({"error": "owner role not seeded yet — run seed_roles.py"}), 500
 
-    membership = ProjectMember(
-        project_id=project.id,
-        user_id=user_id,
-        role_id=owner_role.id
-    )
-    db.session.add(membership)
+        membership = ProjectMember(
+            project_id=project.id,
+            user_id=user_id,
+            role_id=owner_role.id
+        )
+        db.session.add(membership)
+
     db.session.commit()
 
     return jsonify(project.to_dict()), 201
@@ -62,9 +89,14 @@ def create_project():
 @projects_bp.route("/projects/<int:project_id>", methods=["GET"])
 @require_role("viewer")
 def get_project(project_id):
-    """Returns a single project's details. Requires at least viewer role."""
+    """Returns a single project's details, including the caller's role."""
     project = Project.query.get_or_404(project_id)
-    return jsonify(project.to_dict()), 200
+    data = project.to_dict()
+
+    user_id = get_jwt_identity()
+    data["my_role"] = get_effective_project_role(user_id, project_id)
+
+    return jsonify(data), 200
 
 
 @projects_bp.route("/projects/<int:project_id>", methods=["PUT"])
@@ -91,20 +123,17 @@ def delete_project(project_id):
     db.session.delete(project)
     db.session.commit()
     return jsonify({"message": "Project deleted"}), 200
+
+
 @projects_bp.route("/projects/<int:project_id>/members", methods=["GET"])
 @require_role("viewer")
 def list_project_members(project_id):
-    """Lists everyone on the project and their role. Any member (viewer+) can see this."""
-    memberships = ProjectMember.query.filter_by(project_id=project_id).all()
-    return jsonify([
-        {
-            "user_id": m.user_id,
-            "email": m.user.email,
-            "username": m.user.username,
-            "role": m.role_name
-        }
-        for m in memberships
-    ]), 200
+    """
+    Lists everyone with access to the project — direct invites plus,
+    if this project belongs to a squad, everyone in that squad too.
+    Any member (viewer+) can see this.
+    """
+    return jsonify(get_effective_members(project_id)), 200
 
 
 @projects_bp.route("/projects/<int:project_id>/members", methods=["POST"])
@@ -112,7 +141,9 @@ def list_project_members(project_id):
 def add_project_member(project_id):
     """
     Invites a user to the project by email and assigns them a role.
-    Only the project owner can do this.
+    Only the project owner can do this. Creates a real notification for
+    the invited user if this is a brand new membership (not just a role
+    change for someone already on the project).
     Body: { "email": "someone@example.com", "role": "editor" }
     """
     data = request.get_json()
@@ -138,9 +169,22 @@ def add_project_member(project_id):
 
     membership = ProjectMember(project_id=project_id, user_id=user.id, role_id=role.id)
     db.session.add(membership)
+
+    project = Project.query.get(project_id)
+    if user.notifications_enabled:
+        notification = Notification(
+            user_id=user.id,
+            type="invite",
+            message=f"You were added to \"{project.name}\" as {role_name}.",
+            project_id=project_id
+        )
+        db.session.add(notification)
+
     db.session.commit()
 
     return jsonify({"message": f"Added {email} to the project as {role_name}"}), 201
+
+
 @projects_bp.route("/projects/<int:project_id>/validate", methods=["POST"])
 @require_role("editor")
 def toggle_project_validated(project_id):

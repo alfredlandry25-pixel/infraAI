@@ -1,8 +1,8 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import get_jwt_identity
-from decorators import require_role
-from models_auth import db
-from models import Comment, Project
+from decorators import require_role, get_effective_members
+from models_auth import db, User
+from models import Comment, Project, Notification
 
 comments_bp = Blueprint("comments", __name__)
 
@@ -24,8 +24,9 @@ def list_comments(project_id):
 @require_role("viewer")
 def post_comment(project_id):
     """
-    Posts a new comment and pushes it live to everyone currently viewing
-    the project via the socket, in addition to saving it.
+    Posts a new comment, pushes it live to everyone currently viewing the
+    project via the socket, and creates a real notification for every
+    other member of the project (not the commenter themselves).
     Body: { "content": "some message" }
     """
     project = Project.query.get(project_id)
@@ -41,11 +42,28 @@ def post_comment(project_id):
 
     comment = Comment(project_id=project_id, user_id=user_id, content=content)
     db.session.add(comment)
+    db.session.flush()
+
+    other_members = [
+        m for m in get_effective_members(project_id)
+        if m["user_id"] != user_id
+    ]
+    preview = content if len(content) <= 60 else content[:57] + "..."
+    for member in other_members:
+        recipient = User.query.get(member["user_id"])
+        if not recipient or not recipient.notifications_enabled:
+            continue
+        db.session.add(Notification(
+            user_id=member["user_id"],
+            type="comment",
+            message=f"{comment.user.username} commented on \"{project.name}\": {preview}",
+            project_id=project_id
+        ))
+
     db.session.commit()
 
     comment_data = comment.to_dict()
 
-   
     from app import socketio
     socketio.emit("comment_added", comment_data, room=str(project_id))
 

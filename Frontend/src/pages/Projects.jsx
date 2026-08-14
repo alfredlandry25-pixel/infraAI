@@ -58,15 +58,25 @@ function RowActionsMenu({ r, menuFor, setMenuFor, navigate, setEditRow, setExpor
         <>
           <div className="fixed inset-0 z-20" onClick={() => setMenuFor(null)} />
           <div className="absolute right-0 top-8 z-30 w-48 rounded-xl border border-border bg-card shadow-2xl p-1.5">
-            <MenuItem icon={ExternalLink} label="Open" onClick={() => { setMenuFor(null); navigate(`/workspace?project=${r.id}`); }} />
-            <MenuItem icon={Pencil} label="Update" onClick={() => { setMenuFor(null); setEditRow(r); }} />
-            <MenuItem icon={Users} label="Manage Members" onClick={() => { setMenuFor(null); navigate(`/workspace?project=${r.id}&tab=members`); }} />
-            <MenuItem icon={FileDown} label="Export" onClick={() => { setMenuFor(null); setExportRow(r); }} />
-            <MenuItem
-              icon={ShieldCheck}
-              label={r.is_validated ? "Remove validation" : "Mark as validated"}
-              onClick={() => { setMenuFor(null); toggleValidated(r.id); }}
-            />
+            <MenuItem icon={ExternalLink} label="Open" onClick={() => { setMenuFor(null); navigate(`/workspace/${r.id}`); }} />
+                            {r.my_role !== "viewer" && (
+                              <MenuItem icon={Pencil} label="Update" onClick={() => { setMenuFor(null); setEditRow(r); }} />
+                            )}
+                            <MenuItem icon={Users} label="Manage Members" onClick={() => { setMenuFor(null); navigate(`/workspace/${r.id}?tab=members`); }} />
+                            <MenuItem icon={FileDown} label="Export" onClick={() => { setMenuFor(null); setExportRow(r); }} />
+                            {r.my_role !== "viewer" && (
+                              <MenuItem
+                                icon={ShieldCheck}
+                                label={r.is_validated ? "Remove validation" : "Mark as validated"}
+                                onClick={() => { setMenuFor(null); toggleValidated(r.id); }}
+                              />
+                            )}
+                            {r.my_role === "owner" && (
+                              <>
+                                <div className="my-1 border-t border-border" />
+                                <MenuItem icon={Trash2} label="Delete" destructive onClick={() => { setMenuFor(null); setConfirmRow(r); }} />
+                              </>
+                            )}
             <div className="my-1 border-t border-border" />
             <MenuItem icon={Trash2} label="Delete" destructive onClick={() => { setMenuFor(null); setConfirmRow(r); }} />
           </div>
@@ -284,7 +294,14 @@ export default function Projects() {
             <div className="ml-auto flex items-center gap-2">
               <span className="text-xs text-muted-foreground">{selected.size} selected</span>
               <button
-                onClick={() => selected.size && setConfirmBulk(true)}
+                onClick={() => {
+                  const deletable = [...selected].filter((id) => rows.find((r) => r.id === id)?.my_role === "owner");
+                  if (deletable.length === 0) {
+                    setToast("You can only delete architectures you own");
+                    return;
+                  }
+                  setConfirmBulk(true);
+                }}
                 disabled={!selected.size}
                 className="inline-flex items-center gap-2 h-10 px-4 rounded-lg bg-destructive/15 border border-destructive/30 text-destructive text-sm font-semibold hover:bg-destructive/25 transition disabled:opacity-40 disabled:cursor-not-allowed"
               >

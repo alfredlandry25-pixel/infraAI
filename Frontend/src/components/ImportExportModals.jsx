@@ -2,10 +2,20 @@ import { useState } from "react";
 import { Modal } from "@/components/Modal";
 import { Upload } from "lucide-react";
 
-const ALLOWED_EXTENSIONS = [".json"];
-const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
+const DEFAULT_ALLOWED_EXTENSIONS = [".json"];
+const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
 
-export function ImportModal({ open, onClose, onImport, title, description }) {
+export function ImportModal({
+  open,
+  onClose,
+  onImport,
+  title,
+  description,
+  allowedExtensions = DEFAULT_ALLOWED_EXTENSIONS,
+  maxBytes = DEFAULT_MAX_FILE_BYTES,
+  hint,
+  children,
+}) {
   const [file, setFile] = useState(null);
   const [fileError, setFileError] = useState(null);
 
@@ -17,13 +27,13 @@ export function ImportModal({ open, onClose, onImport, title, description }) {
       return;
     }
     const ext = f.name.slice(f.name.lastIndexOf(".")).toLowerCase();
-    if (!ALLOWED_EXTENSIONS.includes(ext)) {
-      setFileError(`Unsupported file type. Allowed: ${ALLOWED_EXTENSIONS.join(", ")}`);
+    if (!allowedExtensions.includes(ext)) {
+      setFileError(`Unsupported file type. Allowed: ${allowedExtensions.join(", ")}`);
       setFile(null);
       return;
     }
-    if (f.size > MAX_FILE_BYTES) {
-      setFileError("File is larger than the 10 MB limit.");
+    if (f.size > maxBytes) {
+      setFileError(`File is larger than the ${Math.round(maxBytes / (1024 * 1024))} MB limit.`);
       setFile(null);
       return;
     }
@@ -32,12 +42,15 @@ export function ImportModal({ open, onClose, onImport, title, description }) {
 
   return (
     <Modal open={open} onClose={onClose} title={title} description={description}>
+      {children}
       <label className="block cursor-pointer">
-        <input type="file" className="hidden" accept={ALLOWED_EXTENSIONS.join(",")} onChange={onFileChange} />
+        <input type="file" className="hidden" accept={allowedExtensions.join(",")} onChange={onFileChange} />
         <div className="rounded-xl border-2 border-dashed border-border bg-surface/50 p-8 text-center hover:border-primary/50 transition">
           <Upload className="h-6 w-6 mx-auto text-muted-foreground" />
           <div className="mt-3 text-sm font-medium">{file ? file.name : "Click to browse or drop a file"}</div>
-          <div className="text-xs text-muted-foreground mt-1">JSON — up to 10 MB</div>
+          <div className="text-xs text-muted-foreground mt-1">
+            {hint || `${allowedExtensions.join(", ").toUpperCase()} — up to ${Math.round(maxBytes / (1024 * 1024))} MB`}
+          </div>
         </div>
       </label>
       {fileError && <p className="mt-3 text-xs text-destructive">{fileError}</p>}
@@ -60,13 +73,13 @@ export function ImportModal({ open, onClose, onImport, title, description }) {
   );
 }
 
-export function ExportModal({ open, onClose, onExport }) {
-  const [fmt, setFmt] = useState("JSON (raw design)");
-  const options = ["JSON (raw design)", "Documentation (Markdown)"];
+export function ExportModal({ open, onClose, onExport, options }) {
+  const opts = options || ["JSON (raw design)", "Documentation (Markdown)"];
+  const [fmt, setFmt] = useState(opts[0]);
   return (
     <Modal open={open} onClose={onClose} title="Export" description="Choose what to download.">
       <div className="space-y-2">
-        {options.map((o) => (
+        {opts.map((o) => (
           <label
             key={o}
             className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition ${

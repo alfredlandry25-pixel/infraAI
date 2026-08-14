@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { api, setAuthToken, clearAuthToken, setUnauthorizedHandler, STORAGE_KEY } from "@/lib/api";
+import { api, setAuthToken, clearAuthToken, setUnauthorizedHandler, STORAGE_KEY, toAbsoluteUrl } from "@/lib/api";
 
 const AuthContext = createContext(null);
 
@@ -21,6 +21,19 @@ function loadStoredSession() {
   return null;
 }
 
+function sessionFromUser(user, accessToken) {
+  return {
+    id: user.id,
+    name: user.username,
+    email: user.email,
+    avatarUrl: toAbsoluteUrl(user.avatar_url) || null,
+    role: user.role || "user",
+    notificationsEnabled: user.notifications_enabled !== false,
+    createdAt: user.created_at || null,
+    accessToken,
+  };
+}
+
 export function AuthProvider({ children }) {
   const [session, setSessionState] = useState(() => loadStoredSession());
   const [failedAttempts, setFailedAttempts] = useState(0);
@@ -33,6 +46,25 @@ export function AuthProvider({ children }) {
     } else {
       localStorage.removeItem(STORAGE_KEY);
     }
+  };
+
+  const updateSession = (partial) => {
+    setSessionState((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, ...partial };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const applyUserUpdate = (user) => {
+    updateSession({
+      name: user.username,
+      email: user.email,
+      avatarUrl: toAbsoluteUrl(user.avatar_url) || null,
+      role: user.role || "user",
+      notificationsEnabled: user.notifications_enabled !== false,
+    });
   };
 
   const logout = () => {
@@ -54,12 +86,7 @@ export function AuthProvider({ children }) {
       const data = await api.post("/auth/login", { email: email.trim(), password });
       setAuthToken(data.access_token);
       setFailedAttempts(0);
-      persistSession({
-        id: data.user.id,
-        name: data.user.username,
-        email: data.user.email,
-        accessToken: data.access_token,
-      });
+      persistSession(sessionFromUser(data.user, data.access_token));
       return { ok: true };
     } catch (err) {
       const next = failedAttempts + 1;
@@ -85,12 +112,7 @@ export function AuthProvider({ children }) {
         password,
       });
       setAuthToken(data.access_token);
-      persistSession({
-        id: data.user.id,
-        name: data.user.username,
-        email: data.user.email,
-        accessToken: data.access_token,
-      });
+      persistSession(sessionFromUser(data.user, data.access_token));
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err.message || "Something went wrong. Try again." };
@@ -98,7 +120,7 @@ export function AuthProvider({ children }) {
   };
 
   const value = useMemo(
-    () => ({ session, isAuthenticated: !!session, failedAttempts, lockedUntil, login, register, logout }),
+    () => ({ session, isAuthenticated: !!session, failedAttempts, lockedUntil, login, register, logout, applyUserUpdate }),
     [session, failedAttempts, lockedUntil],
   );
 

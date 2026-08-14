@@ -12,6 +12,10 @@ export function clearAuthToken() {
   currentToken = null;
 }
 
+export function getAuthToken() {
+  return currentToken;
+}
+
 export function setUnauthorizedHandler(handler) {
   onUnauthorized = handler;
 }
@@ -41,7 +45,9 @@ async function request(method, path, body) {
 
   if (!response.ok) {
     const message = data?.error || `Request failed with status ${response.status}`;
-    throw new Error(message);
+    const err = new Error(message);
+    err.data = data;
+    throw err;
   }
 
   return data;
@@ -51,8 +57,49 @@ export const api = {
   get: (path) => request("GET", path),
   post: (path, body) => request("POST", path, body),
   put: (path, body) => request("PUT", path, body),
+  patch: (path, body) => request("PATCH", path, body),
   del: (path) => request("DELETE", path),
 };
+
+export async function uploadFile(path, fieldName, file, extraFields = {}) {
+  const formData = new FormData();
+  formData.append(fieldName, file);
+  Object.entries(extraFields).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      formData.append(key, value);
+    }
+  });
+
+  const headers = {};
+  if (currentToken) headers["Authorization"] = `Bearer ${currentToken}`;
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    // ignore
+  }
+
+  if (!response.ok) {
+    const message = data?.error || `Upload failed with status ${response.status}`;
+    throw new Error(message);
+  }
+
+  return data;
+}
+
+export function toAbsoluteUrl(path) {
+  if (!path) return null;
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  return `${API_BASE_URL}${path}`;
+}
+
 export async function downloadFile(path, filename) {
   const headers = {};
   if (currentToken) headers["Authorization"] = `Bearer ${currentToken}`;

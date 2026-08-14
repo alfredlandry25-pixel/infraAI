@@ -36,11 +36,13 @@ class User(db.Model):
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
     username = db.Column(db.String(80), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.LargeBinary(60), nullable=False)
+    avatar_url = db.Column(db.String(500), nullable=True)
 
     role_id = db.Column(db.Integer, db.ForeignKey("roles.id"), nullable=True)
     role = db.relationship("Role", back_populates="users")
 
     is_active = db.Column(db.Boolean, default=True, nullable=False)
+    notifications_enabled = db.Column(db.Boolean, default=True, nullable=False, server_default=db.text("true"))
     created_at = db.Column(
         db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
     )
@@ -62,8 +64,10 @@ class User(db.Model):
             "id": self.id,
             "email": self.email,
             "username": self.username,
+            "avatar_url": self.avatar_url,
             "role": self.role_name,
             "is_active": self.is_active,
+            "notifications_enabled": self.notifications_enabled,
             "created_at": self.created_at.isoformat(),
         }
 

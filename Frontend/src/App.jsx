@@ -1,7 +1,8 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { AuthProvider } from "@/context/AuthContext";
+import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 
+import Welcome from "@/pages/Welcome";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
 import ForgotPassword from "@/pages/ForgotPassword";
@@ -13,6 +14,18 @@ import Documents from "@/pages/Documents";
 import Team from "@/pages/Team";
 import Settings from "@/pages/Settings";
 import NotFound from "@/pages/NotFound";
+import AcceptInvite from "@/pages/AcceptInvite";
+
+function HomeRoute() {
+  const { isAuthenticated } = useAuth();
+  return isAuthenticated ? (
+    <ProtectedRoute>
+      <Dashboard />
+    </ProtectedRoute>
+  ) : (
+    <Welcome />
+  );
+}
 
 export default function App() {
   return (
@@ -23,22 +36,16 @@ export default function App() {
           <Route path="/register" element={<Register />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
 
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/workspace"
-            element={
-              <ProtectedRoute>
-                <Workspace />
-              </ProtectedRoute>
-            }
-          />
+         <Route path="/" element={<HomeRoute />} />
+
+         <Route
+           path="/workspace/:projectId"
+           element={
+            <ProtectedRoute>
+             <Workspace />
+           </ProtectedRoute>
+       }
+     />
           <Route
             path="/ai-generator"
             element={
@@ -68,6 +75,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Team />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/team/invite/:token"
+            element={
+              <ProtectedRoute>
+                <AcceptInvite />
               </ProtectedRoute>
             }
           />

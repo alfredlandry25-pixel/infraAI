@@ -1,20 +1,76 @@
 import { useNavigate } from "react-router-dom";
 import { AppShell } from "@/components/AppShell";
+import { Avatar } from "@/components/Avatar";
 import { ConfirmDialog, Toast } from "@/components/Modal";
-import { useState } from "react";
-import { Pencil, LogOut, Camera, X, Save, Bell, Shield, KeyRound, Sparkles } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Pencil, LogOut, Camera, X, Save, Bell, Sparkles } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { isValidEmail, sanitizeText } from "@/lib/validation";
+import { api, uploadFile } from "@/lib/api";
+
+function cap(s) {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
 
 export default function SettingsPage() {
   const navigate = useNavigate();
-  const { logout } = useAuth();
+  const { session, logout, applyUserUpdate } = useAuth();
   const [editing, setEditing] = useState(false);
-  const [notify, setNotify] = useState(true);
-  const [twoFA, setTwoFA] = useState(false);
+  const [notify, setNotify] = useState(session?.notificationsEnabled ?? true);
+  const [notifySaving, setNotifySaving] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
-  const [tokensOpen, setTokensOpen] = useState(false);
   const [toast, setToast] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [usage, setUsage] = useState(null);
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    setNotify(session?.notificationsEnabled ?? true);
+  }, [session?.notificationsEnabled]);
+
+  useEffect(() => {
+    api
+      .get("/auth/me/usage")
+      .then((data) => setUsage(data.generations_this_month))
+      .catch(() => setUsage(null));
+  }, []);
+
+  const toggleNotify = async (next) => {
+    setNotify(next);
+    setNotifySaving(true);
+    try {
+      const res = await api.patch("/auth/me", { notifications_enabled: next });
+      applyUserUpdate(res.user);
+    } catch (e) {
+      setNotify(!next);
+      setToast(e.message || "Couldn't update notification preference");
+    } finally {
+      setNotifySaving(false);
+    }
+  };
+
+  const pickAvatar = () => fileInputRef.current?.click();
+
+  const onAvatarSelected = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    setUploading(true);
+    try {
+      const res = await uploadFile("/auth/me/avatar", "avatar", file);
+      applyUserUpdate(res.user);
+      setToast("Photo updated");
+    } catch (err) {
+      setToast(err.message || "Couldn't upload photo");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const memberSince = session?.createdAt
+    ? new Date(session.createdAt).toLocaleDateString(undefined, { month: "short", year: "numeric" })
+    : "—";
 
   return (
     <AppShell
@@ -34,28 +90,31 @@ export default function SettingsPage() {
         <div className="lg:col-span-2 rounded-2xl border border-border bg-card p-8">
           <div className="flex items-center gap-6">
             <div className="relative">
-              <div className="h-24 w-24 rounded-full bg-gradient-to-br from-primary to-primary-glow grid place-items-center text-4xl font-bold text-primary-foreground">
-                A
-              </div>
-              <button className="absolute -bottom-1 -right-1 h-8 w-8 rounded-full bg-primary text-primary-foreground grid place-items-center border-2 border-card hover:bg-primary-glow transition">
+              <Avatar src={session?.avatarUrl} name={session?.name} size="h-24 w-24" textSize="text-4xl" />
+              <button
+                onClick={pickAvatar}
+                disabled={uploading}
+                className="absolute -bottom-1 -right-1 h-8 w-8 rounded-full bg-primary text-primary-foreground grid place-items-center border-2 border-card hover:bg-primary-glow transition disabled:opacity-50"
+              >
                 <Camera className="h-4 w-4" />
               </button>
+              <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={onAvatarSelected} />
             </div>
             <div>
               <div className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Signed in as</div>
-              <h2 className="text-2xl font-bold mt-1">The Alchemist</h2>
-              <p className="text-sm text-muted-foreground">alchemist@gmail.com</p>
+              <h2 className="text-2xl font-bold mt-1">{session?.name}</h2>
+              <p className="text-sm text-muted-foreground">{session?.email}</p>
               <span className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/15 text-primary text-[11px] font-medium">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary" /> Pro plan · 3 seats
+                <span className="h-1.5 w-1.5 rounded-full bg-primary" /> Free plan
               </span>
             </div>
           </div>
 
           <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field label="Display name" value="The Alchemist" />
-            <Field label="Work email" value="alchemist@gmail.com" />
-            <Field label="Workspace role" value="Owner" />
-            <Field label="Default region" value="eu-west-1" />
+            <Field label="Display name" value={session?.name} />
+            <Field label="Work email" value={session?.email} />
+            <Field label="Account type" value={cap(session?.role)} />
+            <Field label="Member since" value={memberSince} />
           </div>
 
           <div className="mt-8 pt-6 border-t border-border flex justify-end">
@@ -69,8 +128,14 @@ export default function SettingsPage() {
         </div>
 
         <div className="space-y-4">
-          <ToggleRow icon={Bell} title="Notifications" desc="Comments, invites and AI completions." value={notify} onChange={setNotify} />
-          <ToggleRow icon={Shield} title="Two-factor auth" desc="Require an authenticator on every sign-in." value={twoFA} onChange={setTwoFA} />
+          <ToggleRow
+            icon={Bell}
+            title="Notifications"
+            desc="Comments, invites and AI completions."
+            value={notify}
+            onChange={toggleNotify}
+            disabled={notifySaving}
+          />
           <div className="rounded-2xl border border-border bg-card p-5">
             <div className="flex items-center gap-3">
               <div className="h-10 w-10 rounded-lg bg-primary/10 text-primary grid place-items-center">
@@ -78,37 +143,25 @@ export default function SettingsPage() {
               </div>
               <div className="flex-1">
                 <div className="font-medium text-sm">AI usage this month</div>
-                <div className="text-xs text-muted-foreground">142 / 500 generations</div>
+                <div className="text-xs text-muted-foreground">
+                  {usage === null ? "—" : `${usage} generation${usage === 1 ? "" : "s"}`}
+                </div>
               </div>
             </div>
-            <div className="mt-4 h-2 rounded-full bg-surface-2 overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-primary to-primary-glow" style={{ width: "28%" }} />
-            </div>
-          </div>
-          <div className="rounded-2xl border border-border bg-card p-5">
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-lg bg-primary/10 text-primary grid place-items-center">
-                <KeyRound className="h-4 w-4" />
-              </div>
-              <div className="flex-1">
-                <div className="font-medium text-sm">API tokens</div>
-                <div className="text-xs text-muted-foreground">Programmatic access for CI pipelines.</div>
-              </div>
-            </div>
-            <button
-              onClick={() => {
-                setTokensOpen(true);
-                setToast("Token dashboard opened");
-              }}
-              className="mt-4 w-full h-9 rounded-lg bg-surface border border-border text-sm font-semibold hover:bg-surface-2 transition"
-            >
-              Manage tokens
-            </button>
           </div>
         </div>
       </div>
 
-      {editing && <EditModal onClose={() => setEditing(false)} onSave={() => setToast("Account updated")} />}
+      {editing && (
+        <EditModal
+          session={session}
+          onClose={() => setEditing(false)}
+          onSave={(user) => {
+            applyUserUpdate(user);
+            setToast("Account updated");
+          }}
+        />
+      )}
 
       <ConfirmDialog
         open={logoutOpen}
@@ -122,14 +175,6 @@ export default function SettingsPage() {
         description="You'll need to sign in again to reach your architectures."
         confirmText="Log out"
         destructive
-      />
-      <ConfirmDialog
-        open={tokensOpen}
-        onClose={() => setTokensOpen(false)}
-        onConfirm={() => setToast("New API token generated")}
-        title="Generate a new API token?"
-        description="Existing tokens keep working. Store the new one securely — it's shown only once."
-        confirmText="Generate token"
       />
       <Toast message={toast} onDone={() => setToast(null)} />
     </AppShell>
@@ -145,7 +190,7 @@ function Field({ label, value }) {
   );
 }
 
-function ToggleRow({ icon: Icon, title, desc, value, onChange }) {
+function ToggleRow({ icon: Icon, title, desc, value, onChange, disabled }) {
   return (
     <div className="rounded-2xl border border-border bg-card p-5 flex items-center gap-4">
       <div className="h-10 w-10 rounded-lg bg-primary/10 text-primary grid place-items-center">
@@ -156,10 +201,11 @@ function ToggleRow({ icon: Icon, title, desc, value, onChange }) {
         <div className="text-xs text-muted-foreground">{desc}</div>
       </div>
       <button
-        onClick={() => onChange(!value)}
+        onClick={() => !disabled && onChange(!value)}
         role="switch"
         aria-checked={value}
-        className={`relative h-6 w-11 rounded-full transition ${value ? "bg-primary" : "bg-surface-2 border border-border"}`}
+        disabled={disabled}
+        className={`relative h-6 w-11 rounded-full transition disabled:opacity-50 ${value ? "bg-primary" : "bg-surface-2 border border-border"}`}
       >
         <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-background transition-transform ${value ? "translate-x-5" : "translate-x-0.5"}`} />
       </button>
@@ -167,14 +213,18 @@ function ToggleRow({ icon: Icon, title, desc, value, onChange }) {
   );
 }
 
-function EditModal({ onClose, onSave }) {
-  const [name, setName] = useState("The Alchemist");
-  const [email, setEmail] = useState("alchemist@gmail.com");
-  const [password, setPassword] = useState("");
+function EditModal({ session, onClose, onSave }) {
+  const [name, setName] = useState(session?.name || "");
+  const [email, setEmail] = useState(session?.email || "");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
 
-  const onSubmit = (e) => {
+  const onSubmit = async (e) => {
     e.preventDefault();
+    setError(null);
+
     const cleanName = sanitizeText(name, 80);
     if (!cleanName) {
       setError("Name can't be empty.");
@@ -184,12 +234,31 @@ function EditModal({ onClose, onSave }) {
       setError("Enter a valid email address.");
       return;
     }
-    if (password && password.length < 8) {
+    if (newPassword && newPassword.length < 8) {
       setError("New password must be at least 8 characters.");
       return;
     }
-    onSave();
-    onClose();
+    if (newPassword && !currentPassword) {
+      setError("Enter your current password to set a new one.");
+      return;
+    }
+
+    const payload = { username: cleanName, email };
+    if (newPassword) {
+      payload.current_password = currentPassword;
+      payload.new_password = newPassword;
+    }
+
+    setSaving(true);
+    try {
+      const res = await api.patch("/auth/me", payload);
+      onSave(res.user);
+      onClose();
+    } catch (err) {
+      setError(err.message || "Couldn't save changes");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -209,20 +278,29 @@ function EditModal({ onClose, onSave }) {
           <LabeledInput label="Name" maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
           <LabeledInput label="Email" type="email" maxLength={254} value={email} onChange={(e) => setEmail(e.target.value)} />
           <LabeledInput
+            label="Current password"
+            type="password"
+            autoComplete="current-password"
+            placeholder="Required only if setting a new password"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+          />
+          <LabeledInput
             label="New password"
             type="password"
             minLength={8}
             maxLength={128}
             autoComplete="new-password"
             placeholder="Leave blank to keep current password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
           />
           <button
             type="submit"
-            className="mt-2 w-full inline-flex items-center justify-center gap-2 h-11 rounded-xl bg-primary text-primary-foreground font-semibold hover:bg-primary-glow transition"
+            disabled={saving}
+            className="mt-2 w-full inline-flex items-center justify-center gap-2 h-11 rounded-xl bg-primary text-primary-foreground font-semibold hover:bg-primary-glow transition disabled:opacity-50"
           >
-            <Save className="h-4 w-4" /> Save changes
+            <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save changes"}
           </button>
         </form>
       </div>
