@@ -20,7 +20,8 @@ import socket_auth
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:5173"], supports_credentials=True)
+FRONTEND_ORIGINS = os.getenv("FRONTEND_ORIGINS", "http://localhost:5173").split(",")
+CORS(app, origins=FRONTEND_ORIGINS, supports_credentials=True)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-change-later")
 app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
