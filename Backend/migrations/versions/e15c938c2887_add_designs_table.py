@@ -28,8 +28,6 @@ def upgrade():
     sa.ForeignKeyConstraint(['project_id'], ['projects.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
-    op.drop_table('document_embeddings_test')
-    op.drop_table('document_embeddings')
     # ### end Alembic commands ###
 
 
