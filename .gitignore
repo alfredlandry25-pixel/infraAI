@@ -1,4 +1,16 @@
-venv/
-.env
-__pycache__/
-*.pycs    
+# Backend
+Backend/venv/
+Backend/__pycache__/
+Backend/**/__pycache__/
+Backend/.env
+Backend/*.pyc
+# Frontend
+Frontend/node_modules/
+Frontend/dist/
+Frontend/.env
+Frontend/.env.local
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
